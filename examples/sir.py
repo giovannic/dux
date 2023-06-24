@@ -5,7 +5,7 @@ from jax import random, jit, grad
 from jax.lax import scan
 from jaxtyping import Array
 from jax.tree_util import register_pytree_node
-from jax.nn import softmax
+from dux.bernoulli import BernoulliSig, bernoulli
 
 @dataclass
 class State:
@@ -39,33 +39,13 @@ def init(infected: float, n: int, key: Any) -> State:
         jnp.zeros((n,))
     )
 
-def _gumbel_sm_approx(
+def step(
     key: Any,
-    rate: Array,
-    shape: Tuple,
-    temp=.1,
-    min_rate=1e-10,
-    max_rate=1.
-    ) -> Array:
-    # clip rates which are incompatible
-    rate = jnp.minimum(jnp.maximum(rate, min_rate), max_rate)
-    # stack rates for p and q
-    logits = jnp.log(jnp.stack([rate, 1 - rate]))
-    # sample gumbel noise
-    gumbel = random.gumbel(key, shape)
-    # softmax -> probabilities for success and failure
-    r = softmax((logits + gumbel) / temp)
-    # return probability of success
-    return r[0]
-
-def _bernoulli(key: Any, rate: Array, shape: Tuple, **kwargs) -> Array:
-    return random.bernoulli(key, rate, shape)
-
-def bernoulli(*args, **kwargs) -> Array:
-    # return _bernoulli(*args, **kwargs)
-    return _gumbel_sm_approx(*args, **kwargs)
-
-def step(beta: float, gamma: float, state: State, key: Any) -> State:
+    beta: float,
+    gamma: float,
+    state: State,
+    bernoulli: BernoulliSig
+    ) -> State:
     # get a population size
     n = state.susceptible.shape[0]
 
@@ -95,43 +75,33 @@ def observe(state: State) -> Observation:
     )
 
 def _scan_step(
+        key: Any,
         beta: float,
         gamma: float,
         state: State,
-        key: Any
+        bernoulli: BernoulliSig
     ) -> Tuple[State, Observation]:
-    new_state = step(beta, gamma, state, key)
+    new_state = step(key, beta, gamma, state, bernoulli)
     return new_state, observe(new_state)
 
 def run(
+    key: Any,
     n: int,
     infected: float,
     beta: float,
     gamma: float,
     timesteps: int,
-    key: Any
+    bernoulli: BernoulliSig=bernoulli
     ) -> Observation:
     state = init(infected, n, key)
     _, obs = scan(
-        f = lambda s, k: _scan_step(beta, gamma, s, k),
+        f = lambda s, k: _scan_step(k, beta, gamma, s, bernoulli),
         init = state,
         xs = random.split(key, timesteps),
         length = timesteps
     )
     return obs
 
-print(
-    jit(run, static_argnums=[0, 1, 2, 3, 4])(
-        10, .5, .35, .25, 10, random.PRNGKey(0)
-    )
-)
-
-def final_susceptible(*args) -> Array:
-    obs = run(*args)
+def final_susceptible(*args, **kwargs) -> Array:
+    obs = run(*args, **kwargs)
     return obs.n_susceptible[-1]
-
-print(
-    grad(final_susceptible, argnums=[2, 3])(
-        10, .5, .5, .25, 10, random.PRNGKey(0)
-    )
-)
