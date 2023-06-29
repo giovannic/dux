@@ -1,4 +1,6 @@
-from typing import Tuple, Callable, Iterable, Union, Sequence
+from tabulate import tabulate
+from optax import score_function_jacobians, multi_normal
+from typing import Tuple, Callable, Iterable
 from jaxtyping import Array
 from dataclasses import dataclass
 from sir import final_susceptible
@@ -6,7 +8,50 @@ from jax import random, vmap, value_and_grad
 from jax import numpy as jnp
 from dux.bernoulli import BernoulliSig, bernoulli, make_gumbel_sm_approx
 from functools import partial
-from tabulate import tabulate
+
+def _many_value_and_grad(f: Callable, args: Array, n: int) -> Tuple:
+    key = random.PRNGKey(0)
+    keys = random.split(key, n)
+    v, g = vmap(
+        value_and_grad(f, argnums=1),
+        in_axes=[0, None]
+    )(keys, args)
+    return v, g
+
+def _run_gumbel_softmax(f: Callable, args: Array, n: int) -> Tuple:
+    return _many_value_and_grad(
+        partial(f, method=make_gumbel_sm_approx()),
+        args,
+        n
+    )
+
+def _run_bernoulli(f: Callable, args: Array, n: int) -> Tuple:
+    return _many_value_and_grad(
+        partial(f, method=bernoulli),
+        args,
+        n
+    )
+
+def _run_score_function(f: Callable, args: Array, n: int) -> Tuple:
+    std = .1
+    key = random.PRNGKey(0)
+    key, key_i = random.split(key)
+
+    def dist_builder(*args): 
+        args = jnp.array(args)
+        return multi_normal(args, jnp.log(jnp.full_like(args, std)))
+
+    grads = score_function_jacobians(
+        partial(f, key_i, method=bernoulli),
+        args,
+        dist_builder,
+        key,
+        n
+    )
+
+    keys = random.split(key, n)
+    values = vmap(f, in_axes=[0, None])(keys, args)
+    return values, grads 
 
 @dataclass
 class Method:
@@ -14,23 +59,31 @@ class Method:
     method: Callable
 
 methods = [
-    Method('Bernoulli', bernoulli),
-    Method('Gumbel Softmax', make_gumbel_sm_approx())
+    Method('Bernoulli', _run_bernoulli),
+    Method('Gumbel Softmax', _run_gumbel_softmax),
+    Method('Score function', _run_score_function)
 ]
 
-def run_bernoulli(method: BernoulliSig, n: int, p: float) -> Tuple:
-    key = random.PRNGKey(0)
-    keys = random.split(key, n)
+def bernoulli_positive(key, p: Array, method: BernoulliSig = bernoulli) -> Array:
     shape = (10000,)
+    y = jnp.sum(method(key, jnp.full(shape, p), shape)) / shape[0]
+    return y
 
-    def f_n_positive(k, p):
-        return 1. * jnp.sum(method(k, jnp.full(shape, p), shape))
-
-    v, g = vmap(
-        value_and_grad(f_n_positive, argnums=1),
-        in_axes=[0, None]
-    )(keys, p)
-    return v, (g,)
+def run_final_susceptible(
+    key,
+    args: Array,
+    method: BernoulliSig = bernoulli) -> Array:
+    pop = 1000
+    timesteps = 100
+    n_susceptible = final_susceptible(
+        key,
+        pop,
+        args[0],
+        args[1],
+        args[2],
+        timesteps
+    )
+    return n_susceptible / pop
 
 def run_sir(method: BernoulliSig, n: int) -> Tuple:
     """
@@ -48,11 +101,13 @@ def run_sir(method: BernoulliSig, n: int) -> Tuple:
 def _flatten(xs: Iterable) -> Iterable:
     return (y for ys in xs for y in ys)
 
-def summarise_run(values: Array, grads: Tuple) -> Tuple:
-    return (
-        jnp.mean(values),
-        jnp.std(values),
-    ) + tuple(_flatten((jnp.mean(g), jnp.std(g)) for g in grads))
+def summarise_run(values: Array, grads: Array) -> Tuple:
+    value_entry = (jnp.mean(values), jnp.std(values))
+    grad_entries = tuple(_flatten(
+        zip(jnp.mean(grads, axis=0), jnp.std(grads, axis=0))
+    ))
+
+    return value_entry + grad_entries
 
 print('-------------------')
 print('Simple Bernoulli .3')
@@ -62,27 +117,15 @@ print(
     tabulate(
         [
             (method.name,) + summarise_run(
-                *run_bernoulli(method.method, 10, .3)
+                *method.method(
+                    bernoulli_positive, 
+                    jnp.array([.3]),
+                    10
+                )
             )
             for method in methods
         ],
-        headers = ['value', '(std)', 'Δp', '(std)']
-    )
-)
-
-print('-------------------')
-print('Simple Bernoulli .7')
-print('-------------------')
-
-print(
-    tabulate(
-        [
-            (method.name,) + summarise_run(
-                *run_bernoulli(method.method, 10, .7)
-            )
-            for method in methods
-        ],
-        headers = ['value', '(std)', 'Δp', '(std)']
+        headers = ['experiment', 'value', '(std)', 'Δp', '(std)']
     )
 )
 
@@ -96,9 +139,15 @@ sir_arg_headers = list(_flatten((f'Δ{a}', '(std)') for a in sir_args))
 print(
     tabulate(
         [
-            (method.name,) + summarise_run(*run_sir(method.method, 10))
+            (method.name,) + summarise_run(
+                *method.method(
+                    run_final_susceptible,
+                    jnp.array([.5, .25, .35]),
+                    10
+                )
+            )
             for method in methods
         ],
-        headers = ['value', '(std)'] + sir_arg_headers
+        headers = ['experiment', 'value', '(std)'] + sir_arg_headers
     )
 )

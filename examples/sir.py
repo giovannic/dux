@@ -32,10 +32,11 @@ register_pytree_node(
 )
 
 def init(infected: float, n: int, key: Any) -> State:
-    n_infected = int(n * infected)
+    n_infected = jnp.array(n * infected, int)
+    susceptible = (jnp.arange(n) < n_infected).astype(int)
     return State(
-        jnp.zeros((n,)).at[n_infected:].set(1),
-        jnp.zeros((n,)).at[:n_infected].set(1),
+        susceptible,
+        1 - susceptible,
         jnp.zeros((n,))
     )
 
