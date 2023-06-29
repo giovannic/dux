@@ -1,7 +1,7 @@
 from typing import Any, Tuple
 from dataclasses import dataclass
 from jax import numpy as jnp
-from jax import random, jit, grad
+from jax import random
 from jax.lax import scan
 from jaxtyping import Array
 from jax.tree_util import register_pytree_node

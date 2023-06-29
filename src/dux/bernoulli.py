@@ -4,6 +4,7 @@ from jaxtyping import Array
 from jax.nn import softmax
 from jax import numpy as jnp
 from jax import random
+from jax.lax import stop_gradient
 
 BernoulliSig = Callable[[Any, Array, Tuple], Array]
 
@@ -30,13 +31,16 @@ def _gumbel_sm_approx(
     # clip rates which are incompatible
     rate = jnp.minimum(jnp.maximum(rate, min_rate), max_rate)
     # stack rates for p and q
-    logits = jnp.log(jnp.stack([rate, 1 - rate]))
+    logits = jnp.log(jnp.stack([1 - rate, rate]))
     # sample gumbel noise
-    gumbel = random.gumbel(key, shape)
+    gumbel = random.gumbel(key, logits.shape)
     # softmax -> probabilities for success and failure
-    r = softmax((logits + gumbel) / temp)
-    # return probability of success
-    return r[0]
+    r = softmax((logits + gumbel) / temp, axis=0)
+    # return most likely category
+    y = jnp.argmax(r, axis=0)
+    # attach the r success gradient
+    y = stop_gradient(y - r[0]) + r[0]
+    return y
 
 def bernoulli(key: Any, rate: Array, shape: Tuple) -> Array:
     return random.bernoulli(key, rate, shape)
