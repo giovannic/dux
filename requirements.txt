@@ -3,3 +3,5 @@ optax==0.1.5
 networkx==2.7.1
 matplotlib==3.5.3
 scipy==1.7.3
+jax==0.4.13
+jaxtyping==0.2.20
