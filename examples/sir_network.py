@@ -6,9 +6,15 @@ from jax.lax import scan
 from jaxtyping import Array
 from jax.tree_util import register_pytree_node
 from dux.bernoulli import BernoulliSig, bernoulli
+import networkx as nx
 
 @dataclass
 class State:
+    """
+    :param susceptible: array of binary indicators showing whether an individual is susceptible
+    :param infected: array of binary indicators showing whether an individual is infected
+    :param recovered: array of binary indicators showing whether an individual is recovered
+    """
     susceptible: Array
     infected: Array
     recovered: Array
@@ -21,6 +27,11 @@ register_pytree_node(
 
 @dataclass
 class Observation:
+    """
+    :param n_susceptible: total number of susceptible individuals
+    :param n_infected: total number of infected individuals
+    :param n_recovered: total number of recovered individuals
+    """
     n_susceptible: Array
     n_infected: Array
     n_recovered: Array
@@ -31,8 +42,13 @@ register_pytree_node(
     lambda _, args: Observation(*args)
 )
 
-def init(infected: float, n: int, key: Any) -> State:
-    n_infected = jnp.array(n * infected, int)
+def init(infected_frac: float, n: int, key: Any) -> State:
+    """
+    :param infected_frac: initial fraction of infected individuals
+    :param n: population size
+    :param key: a PRNG key used as the random key
+    """
+    n_infected = jnp.array(n * infected_frac, int)
     susceptible = (jnp.arange(n) < n_infected).astype(int)
     return State(
         susceptible,
@@ -62,7 +78,7 @@ def step(
     """
 
     # convert graph from networkx to jnp adjacency-matrix
-    A = nx.to_numpy_array(G, weight=None)
+    A = nx.to_numpy_array(graph, weight=None)
     A = jnp.array(A)
 
     # get a population size
@@ -106,13 +122,13 @@ def _scan_step(
 def run(
     key: Any,
     n: int,
-    infected: float,
+    infected_frac: float,
     beta: float,
     gamma: float,
     timesteps: int,
     bernoulli: BernoulliSig=bernoulli
     ) -> Observation:
-    state = init(infected, n, key)
+    state = init(infected_frac, n, key)
     _, obs = scan(
         f = lambda s, k: _scan_step(k, beta, gamma, s, bernoulli),
         init = state,
@@ -124,17 +140,3 @@ def run(
 def final_susceptible(*args, **kwargs) -> Array:
     obs = run(*args, **kwargs)
     return obs.n_susceptible[-1]
-
-
-
-# compute adjacency matrox from graph
-import networkx as nx
-import matplotlib as plt
-N=3
-G=nx.grid_2d_graph(N,N)
-pos = dict( (n, n) for n in G.nodes() )
-labels = dict( ((i,j), i + (N-1-j) * N ) for i, j in G.nodes() )
-nx.relabel_nodes(G,labels,False)
-nx.draw(G)
-A = nx.to_numpy_array(G, weight=None)
-A
