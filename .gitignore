@@ -1,1 +1,4 @@
 .DS_Store
+examples/__pycache__/
+src/dux.egg-info/
+src/dux/__pycache__/
