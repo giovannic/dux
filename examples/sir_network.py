@@ -42,13 +42,13 @@ register_pytree_node(
     lambda _, args: Observation(*args)
 )
 
-def init(infected_frac: float, n: int, key: Any) -> State:
+def init(initial_infected: float, n: int) -> State:
     """
-    :param infected_frac: initial fraction of infected individuals
+    :param initial_infected: initial fraction of infected individuals
     :param n: population size
     :param key: a PRNG key used as the random key
     """
-    n_infected = jnp.array(n * infected_frac, int)
+    n_infected = jnp.array(n * initial_infected, int)
     susceptible = (jnp.arange(n) < n_infected).astype(int)
     return State(
         susceptible,
@@ -62,7 +62,7 @@ def step(
     gamma: float,
     state: State,
     bernoulli: BernoulliSig,
-    graph: networkx.Graph
+    graph: nx.Graph
     ) -> State:
     """
     Runs the model forward for one timestep.
@@ -122,13 +122,13 @@ def _scan_step(
 def run(
     key: Any,
     n: int,
-    infected_frac: float,
+    initial_infected: float,
     beta: float,
     gamma: float,
     timesteps: int,
     bernoulli: BernoulliSig=bernoulli
     ) -> Observation:
-    state = init(infected_frac, n, key)
+    state = init(initial_infected, n, key)
     _, obs = scan(
         f = lambda s, k: _scan_step(k, beta, gamma, s, bernoulli),
         init = state,
