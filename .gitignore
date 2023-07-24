@@ -1,4 +1,1 @@
-__pycache__
-*.pyc
-dux.egg-info
-*.swp
+.DS_Store
