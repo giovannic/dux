@@ -81,11 +81,11 @@ def step(
     A = nx.to_numpy_array(graph, weight=None)
     A = jnp.array(A)
 
-    # get a population size
+    # get population size
     n = state.susceptible.shape[0]
 
-    # calculate force of infection
-    foi = beta * jnp.sum(state.infected) / n
+    # calculate force of infection based on adjacency
+    foi = beta * jnp.sum(jnp.matmul(A, state.infected)) / n
 
     # sample infections
     key, key_i = random.split(key)
@@ -114,9 +114,10 @@ def _scan_step(
         beta: float,
         gamma: float,
         state: State,
-        bernoulli: BernoulliSig
+        bernoulli: BernoulliSig,
+        graph: nx.Graph
     ) -> Tuple[State, Observation]:
-    new_state = step(key, beta, gamma, state, bernoulli)
+    new_state = step(key, beta, gamma, state, bernoulli, graph)
     return new_state, observe(new_state)
 
 def run(
@@ -126,11 +127,12 @@ def run(
     beta: float,
     gamma: float,
     timesteps: int,
+    graph: nx.Graph,
     bernoulli: BernoulliSig=bernoulli
     ) -> Observation:
-    state = init(initial_infected, n, key)
+    state = init(initial_infected, n)
     _, obs = scan(
-        f = lambda s, k: _scan_step(k, beta, gamma, s, bernoulli),
+        f = lambda s, k: _scan_step(k, beta, gamma, s, graph, bernoulli),
         init = state,
         xs = random.split(key, timesteps),
         length = timesteps
@@ -140,3 +142,9 @@ def run(
 def final_susceptible(*args, **kwargs) -> Array:
     obs = run(*args, **kwargs)
     return obs.n_susceptible[-1]
+
+# key =  random.PRNGKey(1)
+# n = 5
+# initial_infected = 0.4
+# state = init(initial_infected, n)
+# graph=nx.gnp_random_graph(n, p=0.3)
